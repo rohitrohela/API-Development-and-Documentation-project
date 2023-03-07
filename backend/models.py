@@ -16,7 +16,6 @@ setup_db(app)
 
 def setup_db(app, database_path):
     with app.app_context():
-
         if database_path is None:
             database_path = db_path
 
@@ -86,6 +85,5 @@ class Category(db.Model):
 
     def format(self):
         return {
-            'id': self.id,
-            'type': self.type
+            str(self.id): self.type
         }

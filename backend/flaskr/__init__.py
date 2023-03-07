@@ -2,46 +2,44 @@ import json
 import os
 from flask import Flask, request, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 import random
 import path
 import sys
-# directory = path.Path(__file__).abspath()  # Get the name of current directory
-# sys.path.append('..backend')  # append the parent directory so that compiler can search for module in that directory
-
 from backend.models import setup_db, Question, Category, db
 
-QUESTIONS_PER_PAGE = 10
-CATEGORY_PER_PAGE = 5
+QUESTIONS_PER_PAGE = 2
 
 
 def create_app(dbPath=None):
     # create and configure the app
     app = Flask(__name__, instance_relative_config=True)
     setup_db(app, dbPath)
-    # CORS(app)
 
     """
     @TODO: Set up CORS. Allow '*' for origins. Delete the sample route after completing the TODOs
     """
-
+    CORS(app, resources={r"*": {"origins": '*'}})
+    # CORS(app)
     """
     @TODO: Use the after_request decorator to set Access-Control-Allow
     """
+
+    @app.after_request
+    def after_request(response):
+        response.headers.add(
+            "Access-Control-Allow-Headers", "Content-Type, Authorization"
+        )
+        response.headers.add(
+            "Access-Control-Allow-Headers", "GET, POST, DELETE"
+        )
+        return response
 
     """
     @TODO:
     Create an endpoint to handle GET requests
     for all available categories.
     """
-
-    def paginate_categories(req, selection):
-        page = req.args.get("page", 1, type=int)
-        start = (page - 1) * CATEGORY_PER_PAGE
-        end = start + CATEGORY_PER_PAGE
-        categories = [category.format() for category in selection]
-        current_page = categories[start:end]
-        return current_page
 
     def paginate_questions(req, selection):
         page = req.args.get("page", 1, type=int)
@@ -54,16 +52,14 @@ def create_app(dbPath=None):
     @app.route("/categories", methods=["GET"])
     # @cross_origin
     def get_categories():
-        # current_categories = paginate_categories(request, Category.query.all())
-        current_categories = [category.format() for category in Category.query.all()]
-        if len(current_categories) == 0:
-            abort(404)
+        all_category = {}
+        for category in Category.query.all():
+            all_category[str(category.id)] = category.type
 
         return jsonify(
             {
                 "success": True,
-                "categories": current_categories,
-                "total_categories": len(current_categories),
+                "categories": all_category,
             }
         )
 
@@ -80,12 +76,15 @@ def create_app(dbPath=None):
     Clicking on the page numbers should update the questions.
     """
 
-    def get_questions():
+    def get_questions(request):
         current_questions = paginate_questions(request, Question.query.all())
         if len(current_questions) == 0:
             abort(404)
 
-        all_category = [category.format() for category in Category.query.all()]
+        all_category = {}
+        for category in Category.query.all():
+            all_category[str(category.id)] = category.type
+
         return jsonify(
             {
                 "success": True,
@@ -106,7 +105,6 @@ def create_app(dbPath=None):
             )
             db.session.add(question)
             db.session.commit()
-
         except Exception as e:
             db.session.rollback()
             success = False
@@ -122,9 +120,6 @@ def create_app(dbPath=None):
         searchResult = Question.query.filter(Question.question.ilike('%' + searchTerm + '%')).all()
         questions = [question.format() for question in searchResult]
 
-        if len(questions) == 0:
-            abort(404)
-
         return jsonify(
             {
                 "success": True,
@@ -137,13 +132,14 @@ def create_app(dbPath=None):
     # @cross_origin
     def process_questions():
         if request.method == "GET":
-            return get_questions()
+            return get_questions(request)
         elif request.method == "POST":
             req_json = request.get_json()
-            try:
+
+            if "searchTerm" in str(req_json):
                 searchTerm = req_json['searchTerm']
                 return search_question(searchTerm)
-            except Exception as e:
+            else:
                 return save_question(request.get_json())
 
     @app.route("/categories/<int:cat_id>/questions", methods=["GET"])
@@ -175,9 +171,15 @@ def create_app(dbPath=None):
     @app.route("/questions/<int:ques_id>", methods=["DELETE"])
     def delete_question(ques_id):
         success = True
+        recordDeleted = 0
         try:
-            Question.query.filter_by(id=ques_id).delete()
-            db.session.commit()
+            question = Question.query.filter_by(id=ques_id).one_or_none()
+            if question is not None:
+                question.delete()
+                db.session.commit()
+                recordDeleted = 1
+            else:
+                success = False
         except Exception as e:
             db.session.rollback()
             success = False
@@ -185,7 +187,8 @@ def create_app(dbPath=None):
             db.session.close()
         return jsonify(
             {
-                "success": success
+                "success": success,
+                "recordDeleted": recordDeleted
             }
         )
 
@@ -234,19 +237,33 @@ def create_app(dbPath=None):
 
     @app.route("/quizzes", methods=["POST"])
     def get_next_question():
-        req_json = request.get_json()
-        prev_ques = req_json['previous_questions'].split(',')
-        quiz_cat = req_json['quiz_category']
-        questions = Question.query.filter(Question.id.not_in(prev_ques), Question.category == quiz_cat).first()
-        if questions is None:
-            abort(404)
+        success = True
+        result = ""
+        try:
+            req_json = request.get_json()
+            query = []
 
-        return jsonify(
-            {
-                "success": True,
-                "questions": questions.format()
-            }
-        )
+            if len(req_json['previous_questions']) != 0:
+                query.append(Question.id.not_in(req_json['previous_questions']))
+
+            quiz_cat = req_json['quiz_category']
+            if quiz_cat['type'] != 'click':
+                query.append(Question.category == int(quiz_cat['id']))
+
+            # questions = Question.query.filter(Question.id.not_in(prev_ques), Question.category == quiz_cat).first()
+            questions = Question.query.filter(*query).first()
+
+            if questions is not None:
+                result = questions.format()
+        except Exception as e:
+            success = False
+        finally:
+            return jsonify(
+                {
+                    "success": success,
+                    "questions": result
+                }
+            )
 
     """
     @TODO:
