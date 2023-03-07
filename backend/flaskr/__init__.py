@@ -41,12 +41,10 @@ def create_app(dbPath=None):
     for all available categories.
     """
 
-    def paginate_questions(req, selection):
-        page = req.args.get("page", 1, type=int)
-        start = (page - 1) * QUESTIONS_PER_PAGE
-        end = start + QUESTIONS_PER_PAGE
-        questions = [question.format() for question in selection]
-        current_page = questions[start:end]
+    def paginate_questions(req):
+        request_page = req.args.get("page", 1, type=int)
+        selection = Question.query.paginate(page=request_page, per_page=QUESTIONS_PER_PAGE, error_out=True, max_per_page=QUESTIONS_PER_PAGE).items
+        current_page = [question.format() for question in selection]
         return current_page
 
     @app.route("/categories", methods=["GET"])
@@ -77,7 +75,7 @@ def create_app(dbPath=None):
     """
 
     def get_questions(request):
-        current_questions = paginate_questions(request, Question.query.all())
+        current_questions = paginate_questions(request)
         if len(current_questions) == 0:
             abort(404)
 
